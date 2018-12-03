@@ -1,0 +1,134 @@
+---
+- hosts: all
+  become: yes
+  gather_facts: no
+  pre_tasks:
+    - name: 'install python2 on ubuntu 18'
+      raw: test -e /usr/bin/python || (apt-get -y update && apt-get install -y python-minimal)
+
+  tasks:
+    - name: Gathering facts
+      setup:
+
+    - name: Get Java tarball
+      get_url:
+        url: https://download.java.net/java/GA/jdk10/10.0.1/fb4372174a714e6b8c52526dc134031e/10/openjdk-10.0.1_linux-x64_bin.tar.gz
+        dest: /etc/open-jdk10.tar.gz
+
+    - name: make java 10 directory
+      file:
+        path: /usr/lib/java10
+        state: directory
+
+    - name: unpack tarball
+      unarchive:
+        dest: /usr/lib/java10/
+        src: /etc/open-jdk10.tar.gz
+        remote_src: yes
+
+    - name: update alternatives for java
+      alternatives:
+        name: java
+        path: /usr/lib/java10/jdk-10.0.1/bin/java
+        link: /usr/bin/java
+        priority: 2000
+
+    - name: set java environment variable
+      blockinfile:
+        insertafter: EOF
+        path: /etc/environment
+        block: export JAVA_HOME=/usr/lib/java10/jdk-10.0.1
+
+    - name: re-source env variables
+      shell: . /etc/environment
+
+    - name: install packages
+      apt:
+        name: '{{ item }}'
+        state: present
+        update_cache: yes
+      with_items:
+        - nginx
+        - maven
+        - git
+        - python-psycopg2
+
+    - name: allow ssh
+      ufw:
+        rule: allow
+        name: OpenSSH
+
+    - name: allow http/https
+      ufw:
+        rule: allow
+        port: '{{ item }}'
+      with_items:
+        - 443
+        - 80
+
+    - name: setup rate limit over ssh
+      ufw:
+        rule: limit
+        port: ssh
+        proto: tcp
+
+    - name:
+      ufw:
+        state: enabled
+
+    - name: create git directory and node directories
+      file:
+        path: '{{ item }}'
+        state: directory
+        mode: 0777
+      with_items:
+        - /srv/git/site.git
+        - /opt/site-node1
+        - /opt/site-node2
+        - /opt/build
+
+    - name: create git repo to push to
+      command: git init --bare /srv/git/site.git
+      args:
+        creates: /srv/git/site.git/HEAD
+
+    - name: copy node service files
+      copy:
+        src: '{{ item }}'
+        dest: /etc/systemd/system
+        mode: 0755
+      with_items:
+        - ./site-node1.service
+        - ./site-node2.service
+
+    - name: copy nginx config file
+      copy:
+        src: ./nginx_site_conf
+        dest: /etc/nginx/sites-available
+
+    - name: make link to sites-enabled
+      file:
+        src: /etc/nginx/sites-available/nginx_site_conf
+        dest: /etc/nginx/sites-enabled/nginx_site_conf
+        state: link
+
+    - name: remove default configuration
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      register: nginxconf
+
+    - name: reload nginx
+      command: nginx -s reload
+      when: nginxconf.changed
+
+    - name: ensure nginx runs on boot
+      service:
+        name: nginx
+        enabled: yes
+
+    - name: create post-receive file to deploy solution on check in
+      copy:
+        src: ./post-receive.sh
+        dest: /srv/git/site.git/hooks/post-receive
+        mode: 0777

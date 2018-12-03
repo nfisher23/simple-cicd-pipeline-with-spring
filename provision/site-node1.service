@@ -1,0 +1,12 @@
+[Unit]
+Description=Site Node 1
+
+[Service]
+ExecStart=/usr/bin/java -jar -Xmx64m /opt/site-node1/target/simplecicd-0.0.1-SNAPSHOT.jar
+Restart=always
+RestartSec=10
+SyslogIdentifier=site-node1
+Environment=SERVER_PORT=9000
+
+[Install]
+WantedBy=multi-user.target
